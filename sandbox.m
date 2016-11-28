@@ -17,8 +17,8 @@ clc;
 
 %% This block defines sensor positions
 
-zDistance = 10E-2; % [m]
-dx = 3E-3;         % Linear dimension of sensor (same for all dim.) [m]
+zDistance = 20E-2; % Axial position of sensor array [m]
+dx = 5E-3;         % Linear "size" of sensor (same for all dim.) [m]
 
 % Set linear array dimensions
 Dx = 50E-3; % [m]
@@ -28,7 +28,8 @@ Dy = 0; % [m]
 xPaddingDistance = Dx./2;  % [m] 
 yPaddingDistance = Dy./2;  % [m] 
 
-% Total number of array points (sensors), including padding points
+% Calculate total number of array points (sensors), 
+% ---including padding points
 numSpacePointsX = round( ...
     (Dx + 2.*xPaddingDistance)./dx ...
     ); 
@@ -59,13 +60,14 @@ medium.sigma = 0.0725;
 medium.mu = 0.001;
 
 % Set bubble properties
-bubble.R0 = 1.0E-5;   % Equilibrium radius [m]
+bubble.R0 = 1.0E-6;   % Equilibrium radius [m]
 bubble.dR0 = 0;       % Initial wall velocity [m/s]
-bubble.Pvap = 2.33E3; % Vaporization Pressure
+bubble.Pvap = 2.33E3; % Vapor Pressure [Pa]
+bubble.hasShell = 0;
 
 % Set simulation properties
 tMin = 0;
-tMax = 2E-4;
+tMax = 5E-4;
 
 % Natural frequency for Rayleigh-Plesset
 f0_rp = 1./(2*pi*bubble.R0).*sqrt( ...
@@ -74,14 +76,14 @@ f0_rp = 1./(2*pi*bubble.R0).*sqrt( ...
     );
 
 % Excitation function properties
-pAmp = 0.4.*101E3;   % [Pa]
-f0 = f0_rp;        % [Hz]
+pAmp = 0.1.*101E3;   % [Pa]
+f0 = 0.5.*f0_rp;        % [Hz]
 dt = 1./( 15.*f0 ); % Time step [s] (above Nyquist of f0 at least)
 numTimePoints = round((tMax - tMin)./dt); % Number of time points
 omega0 = 2.*pi.*f0;
 tSim = linspace( tMin, tMax, numTimePoints);
-t0 = 2E-5; % [s] Make sure not too large that ODE solver misses excitation
-BW = 0.2;  % Fractional bandwidth
+t0 = 10E-5; % [s] Make sure not too large that ODE solver misses excitation
+BW = 0.3;  % Fractional bandwidth
 
 % Create signal
 normSignal = excitationPulse( tSim, f0, BW, t0, 0 );
@@ -110,10 +112,12 @@ figure();
 subplot( 2, 1, 1)
 plot( excitation.tVector.*1E6, excitation.signal, 'k' );
 ylabel('$s(t)$ [Pa]' );
+zoom xon;
 subplot( 2, 1, 2)
 plot( timeVector.*1E6, R./bubble.R0, 'k' );
 xlabel('Time [$\mu$s]' );
 ylabel('$R/R_{0}$ [m]' );
+zoom xon;
 
 
 
@@ -138,7 +142,6 @@ dt = timeVector(2) - timeVector(1); % Time step [s]
 Fs = 1./dt; % Sampling frequency [Hz]
 numFreqPoints = numTimePoints; % For readability
 fVector = linspace( 0, Fs, numFreqPoints );
-
 
 % Now get FT of bubble wall velocity
 RdotTilde = fft(Rdot);
@@ -189,34 +192,46 @@ end
 
 %% Plotting
 
+% Set x- or y-slice positions to plot
+xSlicePos = 0; % [m]
+ySlicePos = 0; % [m]
+
 % Get normalized data
-try
-    sensorDataNorm = sensorData./(max(max(max(abs(sensorData)))) );
-catch
-    sensorDataNorm = sensorData./(max(max(abs(sensorData))) );
-end
+sensorDataNorm = sensorData./(max(max(max(abs(sensorData)))) );
+
+% FFT of (normalized) received data
+sensorDataNormTilde = fft( sensorDataNorm, [], 3 );
+
+% Get meshgrid for plotting
+[tPlotVectorX, xPosPlotVectorTime] = meshgrid( timeVector, xPositions);
+[fPlotVectorX, xPosPlotVectorFreq] = meshgrid( fVector, xPositions);
+[tPlotVectorY, yPosPlotVectorTime] = meshgrid( timeVector, yPositions);
+[fPlotVectorY, yPosPlotVectorFreq] = meshgrid( fVector, yPositions);
+
+% 2D Colorplot
+
+% Get matrix ( x-receiver by time ) to plot for that y value
+yIndex = find( yPositions >= ySlicePos, 1 );
+xPlotData = squeeze( sensorDataNorm( :, yIndex, : ) );
+xPlotDataTilde = abs(squeeze( sensorDataNormTilde( :, yIndex, : ) ));
 
 figure()
-for plotCount = 1:numSpacePointsX
-    
-    subplot( 2, 1, 1 );
-    hold all;
-    xData = squeeze( sensorDataNorm( plotCount, 1, : ) );
-    plot( timeVector.*1E6, 2E-3*xData + xPositions(plotCount), 'k' );
-    subplot( 2, 1, 2 );
-    hold all;
-    xDataTilde = fft(xData);
-    plot( fVector./1E3, 2E-5*abs(xDataTilde) + xPositions(plotCount), 'k' );
-    
-end
-
-subplot( 2, 1, 1 )
+subplot( 2, 1, 1 );
+hold all;
+pcolor( tPlotVectorX.*1E6, xPosPlotVectorTime.*1E3, xPlotData );
+shading interp
+set( gca, 'clim', [-1, 1] );
 ylabel('Distance [mm]');
 xlabel('Time [$\mu$s]');
-subplot( 2, 1, 2 )
+
+subplot( 2, 1, 2 );
+hold all;
+pcolor( fPlotVectorX.*1E-6, xPosPlotVectorFreq.*1E3, xPlotDataTilde );
+shading interp
 ylabel('Distance [mm]');
-xlabel('Frequency [kHz]');
-xlim( [0, max(fVector)./2] );
+xlabel('Frequency [MHz]');
+xlim( [0, (Fs.*1E-6)/2] );
+set( gca, 'clim', [0, 8] );
 
 zoom xon;
 
